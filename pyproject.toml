@@ -1,0 +1,39 @@
+[project]
+name = "bowler-analysis"
+version = "0.1.0"
+description = "Cricket bowler performance analysis (line & length, speed) from single phone-camera video"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+authors = [{ name = "Deep Patel" }]
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python>=4.9",
+    "scipy>=1.11",
+    "filterpy>=1.4.5",
+    "matplotlib>=3.8",
+    "reportlab>=4.0",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "typer>=0.12",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+# Phase 2 (biomechanics) and Phase 1.5 (YOLO) — installed on demand.
+pose = ["mediapipe>=0.10"]
+yolo = ["ultralytics>=8.1"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+bowler-analyze = "bowler_analysis.cli:app"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

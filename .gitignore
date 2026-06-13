@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Project data (videos, intermediate artifacts, outputs)
+data/raw/*
+data/calibration/*
+data/output/*
+!data/raw/.gitkeep
+!data/calibration/.gitkeep
+!data/output/.gitkeep
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Test cache
+.pytest_cache/
+
+# ML artifacts
+*.pt
+models/
+data/ball_dataset/
+runs/

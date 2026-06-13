@@ -1,0 +1,60 @@
+# Default configuration for bowler-analysis.
+# All distances in metres. Coordinate frame (see geometry/pitch_model.py):
+#   origin   = base of the striker's middle stump
+#   +y       = down the pitch, toward the bowler's end (bowler stumps at y = 20.12)
+#   +x       = lateral; +x is the OFF side for a right-handed batter (configurable)
+
+geometry:
+  pitch_length_m: 20.12        # stump-to-stump (22 yards)
+  popping_crease_offset_m: 1.22  # popping crease is 1.22 m in front of the stumps (toward bowler)
+  return_crease_half_width_m: 1.32  # return creases sit 1.32 m either side of middle stump
+  stump_height_m: 0.711        # 28 inches
+  wicket_width_m: 0.2286       # 9 inches (outer stump to outer stump)
+
+# Length zones: distance from the striker's stumps (metres) where the ball pitches.
+# Bands are [min, max); the last band has max = pitch_length. Ordered near->far.
+length_zones:
+  - { name: "Yorker",        min: 0.0,  max: 1.5,  color: "#8e44ad" }
+  - { name: "Full",          min: 1.5,  max: 4.0,  color: "#27ae60" }
+  - { name: "Good",          min: 4.0,  max: 8.0,  color: "#f39c12" }
+  - { name: "Back of length", min: 8.0, max: 10.0, color: "#e67e22" }
+  - { name: "Short",         min: 10.0, max: 20.12, color: "#c0392b" }
+# A delivery that never bounces before the batsman is a "Full toss".
+full_toss_label: "Full toss"
+
+# Line zones: signed lateral position x (metres) of the bounce, where +x = OFF side
+# for the configured batter handedness. Bands are [min, max).
+line_zones:
+  - { name: "Down leg",         min: -10.0, max: -0.30 }
+  - { name: "Leg stump",        min: -0.30, max: -0.06 }
+  - { name: "Middle stump",     min: -0.06, max:  0.06 }
+  - { name: "Off stump",        min:  0.06, max:  0.20 }
+  - { name: "Outside off",      min:  0.20, max:  0.45 }
+  - { name: "Wide outside off", min:  0.45, max: 10.0 }
+
+batter:
+  handedness: "rhb"        # rhb | lhb
+  # Sign of world +x that corresponds to the OFF side for a RIGHT-handed batter.
+  # If your line labels come out off/leg-swapped, flip this (or pass --mirror).
+  rhb_off_sign: 1
+
+tracking:
+  bg_history: 200          # MOG2 history
+  bg_var_threshold: 25
+  min_blob_area_px: 4
+  max_blob_area_px: 1200
+  min_circularity: 0.45
+  corridor_margin_m: 1.5   # accept ball candidates within this lateral margin of the pitch
+  max_assoc_dist_px: 120   # Kalman gating distance for association
+  max_missed_frames: 12    # frames the tracker coasts before dropping a track
+
+calibration:
+  max_reprojection_error_px: 8.0   # warn/gate above this
+
+quality:
+  min_track_points: 6      # minimum detections to trust a delivery
+
+yolo:
+  model: "yolo11n.pt"      # stock COCO model (detects a 'sports ball' class)
+  model_is_custom: false   # set true + point 'model' at a cricket-ball fine-tuned .pt
+  conf: 0.10               # low confidence: small/blurred cricket balls score low
