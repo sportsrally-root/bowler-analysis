@@ -22,6 +22,10 @@ dependencies = [
 # Phase 2 (biomechanics) and Phase 1.5 (YOLO) — installed on demand.
 pose = ["mediapipe>=0.10"]
 yolo = ["ultralytics>=8.1"]
+# Vision-LLM batter analysis. `anthropic[aws]` covers the default Claude Platform
+# on AWS backend (and direct/Bedrock); `databricks` adds the OpenAI-compatible path.
+llm = ["anthropic[aws]>=0.40"]
+databricks = ["openai>=1.40"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]

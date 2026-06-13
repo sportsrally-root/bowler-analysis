@@ -12,6 +12,7 @@ venv/
 data/raw/*
 data/calibration/*
 data/output/*
+data/batter_shots/
 !data/raw/.gitkeep
 !data/calibration/.gitkeep
 !data/output/.gitkeep

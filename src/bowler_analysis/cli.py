@@ -4,6 +4,7 @@ Commands:
   info       Print video metadata (fps, slow-mo flag, resolution, frames).
   calibrate  Click pitch references -> homography (saved to JSON) + QA overlay.
   run        Full Phase 1 pipeline: track -> line/length/speed -> video + PDF.
+  batter     Vision-LLM analysis of a single batting shot -> coaching PDF + JSON.
 """
 
 from __future__ import annotations
@@ -117,6 +118,63 @@ def run(
         typer.echo(f"  #{d.index}: {d.length_label or '?'} / {d.line_label or '?'}  "
                    f"({d.length_m if d.length_m is not None else '?'} m)  speed {spd}")
     typer.secho(f"Report + outputs in: {out}", fg="green")
+
+
+@app.command()
+def batter(
+    video: str,
+    out: str = typer.Option("data/output/batter", "--out", help="Output directory."),
+    clip: Optional[str] = typer.Option(
+        None, "--clip", help="Scope to a START:END second window (e.g. 7.5:11.5)."),
+    backend: Optional[str] = typer.Option(
+        None, "--backend", help="nova | aws | bedrock | anthropic | databricks (overrides config)."),
+    model: Optional[str] = typer.Option(None, "--model", help="Claude model id."),
+    config: Optional[str] = typer.Option(None, "--config"),
+):
+    """Analyse a single batting-shot clip with a vision LLM -> coaching PDF + JSON."""
+    from .analysis.shot_llm import analyze_clip
+    from .render.batter_report import build_batter_report
+
+    cfg = load_config(config)
+    if backend:
+        cfg.llm.backend = backend.lower()
+    if model:
+        cfg.llm.model = model
+
+    clip_s = None
+    if clip:
+        a, b = clip.split(":")
+        clip_s = (float(a), float(b))
+
+    run_id = Path(out).name
+    typer.echo(f"Analysing shot with {cfg.llm.model} ({cfg.llm.backend}) ...")
+    try:
+        data = analyze_clip(video, cfg, run_id=run_id, out_dir=out, clip_s=clip_s)
+    except Exception as exc:  # surface a clean prerequisite hint, not a traceback
+        hints = {
+            "nova": "Amazon Nova on Bedrock needs AWS credentials + a region (AWS_REGION, "
+                    "default us-east-1) and Bedrock model access to amazon.nova-* models.",
+            "aws": "Claude Platform on AWS needs AWS_REGION + ANTHROPIC_AWS_WORKSPACE_ID "
+                   "(plus AWS credentials on the standard chain).",
+            "bedrock": "Amazon Bedrock needs AWS credentials + AWS_REGION.",
+            "anthropic": "Direct Anthropic needs ANTHROPIC_API_KEY.",
+            "databricks": "Databricks needs DATABRICKS_HOST + DATABRICKS_TOKEN and "
+                          "llm.databricks_endpoint (the serving endpoint name).",
+        }
+        typer.secho(f"\nLLM call failed: {exc}", fg="red")
+        typer.secho(hints.get(cfg.llm.backend, ""), fg="yellow")
+        raise typer.Exit(1)
+    pdf = build_batter_report(data, out)
+
+    a = data.analysis
+    typer.secho(f"\n{a.shot_type}  [{a.shot_family}]  "
+                f"({a.confidence:.0%} confidence) — overall: {a.overall_rating}",
+                fg="green")
+    if data.contact_detected:
+        typer.echo(f"  bat-ball contact (audio): ~{data.contact_time_s:.2f}s")
+    for d in a.dimensions:
+        typer.echo(f"  {d.name}: {d.rating}")
+    typer.secho(f"Report: {pdf}", fg="green")
 
 
 if __name__ == "__main__":

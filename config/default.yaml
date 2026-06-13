@@ -58,3 +58,16 @@ yolo:
   model: "yolo11n.pt"      # stock COCO model (detects a 'sports ball' class)
   model_is_custom: false   # set true + point 'model' at a cricket-ball fine-tuned .pt
   conf: 0.10               # low confidence: small/blurred cricket balls score low
+
+# Vision-LLM batter shot analysis (the `batter` command).
+llm:
+  backend: "nova"          # nova | aws | bedrock | anthropic | databricks
+  # nova    -> Amazon Nova on Bedrock (first-party; no Marketplace subscription)
+  # aws     -> Claude Platform on AWS;  bedrock -> Claude on Bedrock (needs sub)
+  # anthropic -> direct Claude API;     databricks -> OpenAI-compatible endpoint
+  model: "us.amazon.nova-pro-v1:0"  # for claude backends use e.g. claude-opus-4-8
+  n_frames: 9              # frames sampled around the swing and sent to the model
+  max_tokens: 4096
+  image_long_edge_px: 768  # downscale sampled frames before encoding (token cost)
+  databricks_endpoint: null  # serving endpoint name (databricks backend only)
+  databricks_host: null      # else read from env DATABRICKS_HOST

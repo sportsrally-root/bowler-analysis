@@ -62,6 +62,26 @@ class Yolo(BaseModel):
     conf: float = 0.10             # low: a small/blurred cricket ball is low-confidence
 
 
+class Llm(BaseModel):
+    """Settings for the vision-LLM batter analysis path.
+
+    ``backend`` picks the client: ``aws`` (Claude Platform on AWS, default),
+    ``bedrock`` (Amazon Bedrock), ``anthropic`` (direct API), or ``databricks``
+    (OpenAI-compatible serving endpoint). The first three share the ``anthropic``
+    SDK and differ only by client + model-id prefix; ``databricks`` uses the
+    ``openai`` client. See ``llm/client.py``.
+    """
+
+    backend: str = "nova"              # nova | aws | bedrock | anthropic | databricks
+    model: str = "us.amazon.nova-pro-v1:0"  # claude backends: e.g. claude-opus-4-8
+    n_frames: int = 9                  # frames sampled around the swing per shot
+    max_tokens: int = 4096
+    image_long_edge_px: int = 768      # downscale frames before encoding (cost)
+    # Databricks-only: serving endpoint name + host (token via env DATABRICKS_TOKEN).
+    databricks_endpoint: str | None = None
+    databricks_host: str | None = None  # else env DATABRICKS_HOST
+
+
 class Config(BaseModel):
     geometry: Geometry = Field(default_factory=Geometry)
     length_zones: list[Zone] = Field(default_factory=list)
@@ -72,6 +92,7 @@ class Config(BaseModel):
     calibration: Calibration = Field(default_factory=Calibration)
     quality: Quality = Field(default_factory=Quality)
     yolo: Yolo = Field(default_factory=Yolo)
+    llm: Llm = Field(default_factory=Llm)
 
 
 def load_config(path: str | Path | None = None) -> Config:

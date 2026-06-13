@@ -84,6 +84,36 @@ are in `geometry/pitch_model.py`):
 bowler-analyze calibrate clip.mp4 --out cal.json --points-file points.json
 ```
 
+## Batter shot analysis (vision LLM)
+
+`bowler-analyze batter` analyses a **single batting-shot clip** with a Claude
+vision model — it classifies the shot and writes a coaching report (PDF + JSON),
+**zero-shot, no training data**. Use it on clean, single-batter clips (e.g. the
+per-shot files from `scripts/segment_shots.py`).
+
+```bash
+pip install -e ".[llm]"            # anthropic[aws] (+ boto3 for the Nova/Bedrock path)
+export AWS_REGION=us-east-1         # default backend: Amazon Nova on Bedrock
+bowler-analyze batter data/batter_shots/straight_drive/clip_shot01.mp4 --out data/output/shot01
+#   --backend nova|aws|bedrock|anthropic|databricks   override the configured backend
+#   --model us.amazon.nova-pro-v1:0                    override the model
+```
+
+It samples frames around the swing (reusing the motion detector), sends them in
+one structured call, and writes `report.pdf`, `analysis.json`, and a `frames.png`
+contact sheet. Backends are config-driven (`llm:` in `config/default.yaml`):
+
+| Backend | Model | Notes |
+|---|---|---|
+| `nova` (default) | `us.amazon.nova-pro-v1:0` | Amazon's first-party multimodal model on Bedrock — **no third-party Marketplace subscription** needed, works on a plain Bedrock-enabled AWS account. Uses boto3 `converse`. |
+| `aws` | `claude-opus-4-8` | Claude Platform on AWS (`AnthropicAWS`); needs `ANTHROPIC_AWS_WORKSPACE_ID` + a completed Marketplace subscription. Best quality. |
+| `bedrock` | `us.anthropic.claude-opus-4-8` | Claude on Bedrock; needs the Anthropic Marketplace subscription (valid AWS payment instrument). |
+| `anthropic` | `claude-opus-4-8` | Direct Claude API (`ANTHROPIC_API_KEY`), bypasses AWS. |
+| `databricks` | endpoint name | OpenAI-compatible serving endpoint (`DATABRICKS_HOST`/`DATABRICKS_TOKEN`). |
+
+Structured output degrades gracefully to prompt-based JSON on backends without
+native support (Nova, Databricks).
+
 ## Getting a clip
 
 Any `.mp4`/`.mov` works. To pull one from a URL:
