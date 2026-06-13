@@ -68,6 +68,9 @@ bowler-analyze run data/raw/my_clip.mp4 --calibration data/calibration/my_clip.j
   does **not** detect cricket balls (too small) — you must supply a cricket-ball
   fine-tuned model via `--model` (or set `yolo.model` + `yolo.model_is_custom: true`
   in config). With that, `--detector yolo` picks the ball out of bowler/net motion.
+  > Note: run stock COCO and it will report a "sports ball" — but on real footage that
+  > is usually a **false positive** (a stationary round object such as a helmet), not
+  > the delivery. A fine-tuned model is mandatory for the YOLO path to mean anything.
 
 Outputs land in `data/output/my_run/`: `report.pdf`, `annotated_delivery_*.mp4`,
 `pitch_map.png`, `distributions.png`, and the stage JSONs.
@@ -80,6 +83,49 @@ are in `geometry/pitch_model.py`):
 ```bash
 bowler-analyze calibrate clip.mp4 --out cal.json --points-file points.json
 ```
+
+## Getting a clip
+
+Any `.mp4`/`.mov` works. To pull one from a URL:
+
+```bash
+.venv/bin/python -m pip install yt-dlp
+.venv/bin/yt-dlp -f "bv*+ba/b" --merge-output-format mp4 \
+    -o "data/raw/%(title).60s.%(ext)s" "<video-url>"
+```
+
+`data/raw/`, `data/output/` and model weights are git-ignored, so downloaded clips
+and run outputs stay local.
+
+## Working with match / broadcast footage
+
+The pipeline assumes **one continuous clip from a single static camera, calibrated
+once**. Edited highlights — a montage that cuts between deliveries, camera angles,
+zoom levels, or matches — **break this** and will produce meaningless numbers: a
+single homography is only valid for one fixed camera, and the tracker jumps across
+cuts. Telltale signs the source is unsuitable as-is: a title/intro animation, a baked-in
+watermark, a "CAM N"/scoreboard overlay, or aspect-ratio changes mid-video.
+
+If you only have such a video, isolate **one delivery from one fixed camera** first:
+
+```bash
+# 1. Find hard cuts (scene changes) to spot continuous segments
+ffmpeg -i data/raw/montage.mp4 -vf "select='gt(scene,0.25)',metadata=print:file=-" \
+    -an -f null -                                    # prints pts_time of each cut
+
+# 2. Cut out a single delivery (~2 s lead-in lets the bg model settle), keep resolution
+ffmpeg -ss 53 -i data/raw/montage.mp4 -t 5.5 -c:v libx264 -crf 18 -an \
+    data/raw/one_delivery.mp4
+
+# 3. Calibrate + run on that clip as usual (headless calibration works on a still frame
+#    if a GUI is unavailable — read crease/stump pixels off a frame you crop & zoom).
+```
+
+Even then, expect trouble: broadcast frames are **low-res, motion-blurred and
+watermarked**, and the ball is only a few pixels across moving away from a wide camera.
+Both detectors struggle (`classical` tends to latch onto the bowler's body; stock
+`yolo` onto static round false positives). Reliable line/length/speed needs footage
+that follows the protocol below — not match/TV footage.
 
 ## Recommended recording protocol
 
