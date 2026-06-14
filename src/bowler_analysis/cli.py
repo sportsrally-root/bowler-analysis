@@ -174,7 +174,54 @@ def batter(
         typer.echo(f"  bat-ball contact (audio): ~{data.contact_time_s:.2f}s")
     for d in a.dimensions:
         typer.echo(f"  {d.name}: {d.rating}")
+    typer.echo(f"  tokens: {data.input_tokens} in / {data.output_tokens} out  "
+               f"(est. ${data.cost_usd:.4f})")
     typer.secho(f"Report: {pdf}", fg="green")
+
+
+@app.command()
+def session(
+    video: str,
+    out: str = typer.Option("data/output/session", "--out", help="Output directory."),
+    max_shots: Optional[int] = typer.Option(
+        None, "--max-shots", help="Cap to the N strongest shots (default: all)."),
+    backend: Optional[str] = typer.Option(None, "--backend"),
+    model: Optional[str] = typer.Option(None, "--model"),
+    config: Optional[str] = typer.Option(None, "--config"),
+):
+    """Detect every shot (via the audio knock) and analyse them into ONE PDF."""
+    from .analysis.shot_llm import analyze_session
+    from .render.batter_report import build_session_report
+
+    cfg = load_config(config)
+    if backend:
+        cfg.llm.backend = backend.lower()
+    if model:
+        cfg.llm.model = model
+
+    run_id = Path(out).name
+
+    def _progress(i: int, n: int, msg: str):
+        typer.echo(f"  [{i}/{n}] analysing {msg} ...")
+
+    typer.echo(f"Detecting shots and analysing with {cfg.llm.model} "
+               f"({cfg.llm.backend}) ...")
+    try:
+        data = analyze_session(video, cfg, run_id=run_id, out_dir=out,
+                               max_shots=max_shots, progress=_progress)
+    except Exception as exc:
+        typer.secho(f"\nSession analysis failed: {exc}", fg="red")
+        raise typer.Exit(1)
+    pdf = build_session_report(data, out)
+
+    from collections import Counter
+    types = Counter(s.analysis.shot_type for s in data.shots)
+    typer.secho(f"\nAnalysed {len(data.shots)} shots: "
+                + ", ".join(f"{k} x{n}" for k, n in types.most_common()), fg="green")
+    typer.echo(f"Tokens: {data.input_tokens} in / {data.output_tokens} out "
+               f"({data.input_tokens + data.output_tokens} total) — "
+               f"est. ${data.cost_usd:.4f} ({cfg.llm.model})")
+    typer.secho(f"Session report: {pdf}", fg="green")
 
 
 if __name__ == "__main__":

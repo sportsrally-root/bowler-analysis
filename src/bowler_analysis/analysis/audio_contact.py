@@ -23,13 +23,8 @@ from scipy.io import wavfile
 from scipy.signal import butter, find_peaks, sosfilt
 
 
-def detect_contact_time(clip_path: str, hp_hz: float = 1500.0) -> tuple[float, float] | None:
-    """Return ``(contact_time_s, strength)`` of the sharpest knock, or ``None``.
-
-    ``strength`` is the onset peak relative to the mean onset — higher = more
-    clearly impulsive (a confidence proxy). ``None`` if the clip has no usable
-    audio track.
-    """
+def _onset_signal(clip_path: str, hp_hz: float) -> tuple[np.ndarray, int] | None:
+    """High-passed amplitude-onset signal + sample rate, or None if no audio."""
     with tempfile.TemporaryDirectory() as td:
         wav = str(Path(td) / "a.wav")
         try:
@@ -41,7 +36,6 @@ def detect_contact_time(clip_path: str, hp_hz: float = 1500.0) -> tuple[float, f
             sr, x = wavfile.read(wav)
         except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
             return None
-
     if x.ndim > 1:
         x = x[:, 0]
     x = x.astype(np.float64)
@@ -49,17 +43,42 @@ def detect_contact_time(clip_path: str, hp_hz: float = 1500.0) -> tuple[float, f
     if peak == 0:
         return None
     x /= peak
-
     sos = butter(4, hp_hz / (sr / 2), btype="high", output="sos")
     env = np.abs(sosfilt(sos, x))
     win = max(1, int(sr * 0.005))
     smooth = np.convolve(env, np.ones(win) / win, mode="same")
     onset = np.clip(np.diff(smooth, prepend=smooth[0]), 0, None)
+    return onset, sr
 
-    peaks, _ = find_peaks(onset, distance=int(sr * 0.15),
-                          height=float(onset.max()) * 0.5)
+
+def detect_contacts(clip_path: str, hp_hz: float = 2000.0, min_gap_s: float = 1.0,
+                    rel_height: float = 0.25, max_n: int = 60) -> list[tuple[float, float]]:
+    """All bat-ball knocks as ``[(time_s, strength), ...]`` sorted by time.
+
+    Each shot in a session is a sharp transient; this returns up to ``max_n`` of
+    the strongest, separated by at least ``min_gap_s``. ``strength`` is the onset
+    peak relative to the mean (impulsiveness / confidence proxy).
+    """
+    res = _onset_signal(clip_path, hp_hz)
+    if res is None:
+        return []
+    onset, sr = res
+    peaks, props = find_peaks(onset, distance=int(sr * min_gap_s),
+                              height=float(onset.max()) * rel_height)
     if len(peaks) == 0:
+        return []
+    mean = float(onset.mean()) + 1e-12
+    cands = [(int(p) / sr, float(props["peak_heights"][i] / mean))
+             for i, p in enumerate(peaks)]
+    cands.sort(key=lambda c: c[1], reverse=True)
+    cands = cands[:max_n]
+    cands.sort(key=lambda c: c[0])
+    return cands
+
+
+def detect_contact_time(clip_path: str, hp_hz: float = 2000.0) -> tuple[float, float] | None:
+    """The single sharpest knock ``(time_s, strength)`` for anchoring one shot."""
+    cands = detect_contacts(clip_path, hp_hz=hp_hz, min_gap_s=0.15, rel_height=0.5)
+    if not cands:
         return None
-    best = int(peaks[np.argmax(onset[peaks])])
-    strength = float(onset[best] / (onset.mean() + 1e-12))
-    return best / sr, strength
+    return max(cands, key=lambda c: c[1])

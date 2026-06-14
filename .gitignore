@@ -26,8 +26,8 @@ data/batter_shots/
 # Test cache
 .pytest_cache/
 
-# ML artifacts
+# ML artifacts (root-level weights dir only — NOT the src models/ package)
 *.pt
-models/
+/models/
 data/ball_dataset/
 runs/

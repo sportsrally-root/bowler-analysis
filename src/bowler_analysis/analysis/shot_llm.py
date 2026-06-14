@@ -18,9 +18,13 @@ import numpy as np
 
 from ..config import Config
 from ..ingest.video_reader import probe_video, read_frame_at
-from ..llm import make_client
-from ..models.batter_schemas import BatterReportData
-from .audio_contact import detect_contact_time
+from ..llm import Usage, estimate_cost, make_client
+from ..models.batter_schemas import (
+    BatterReportData,
+    SessionReportData,
+    SessionShot,
+)
+from .audio_contact import detect_contact_time, detect_contacts
 from .swing import find_swings, motion_energy
 
 _SYSTEM = (
@@ -143,7 +147,7 @@ def analyze_clip(clip_path: str, cfg: Config, run_id: str, out_dir: str | Path,
     if not images_b64:
         raise RuntimeError(f"Could not read any frames from {work_clip}")
 
-    sheet = _contact_sheet(frames, str(out_dir / "frames.png"))
+    sheet = _contact_sheet(frames, str(out_dir / "frames.jpg"))
 
     contact_note = ""
     if contact is not None:
@@ -160,7 +164,7 @@ def analyze_clip(clip_path: str, cfg: Config, run_id: str, out_dir: str | Path,
     )
 
     client = make_client(cfg.llm)
-    analysis = client.analyze_images(images_b64, _SYSTEM, user_text)
+    analysis, usage = client.analyze_images(images_b64, _SYSTEM, user_text)
 
     return BatterReportData(
         run_id=run_id,
@@ -173,5 +177,95 @@ def analyze_clip(clip_path: str, cfg: Config, run_id: str, out_dir: str | Path,
         contact_detected=contact is not None,
         contact_time_s=round(contact[0], 3) if contact else None,
         contact_strength=round(contact[1], 1) if contact else None,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        cost_usd=round(estimate_cost(cfg.llm.model, usage), 4),
         analysis=analysis,
     )
+
+
+def _user_text(n_images: int, contact_s: float | None = None) -> str:
+    note = ""
+    if contact_s is not None:
+        note = (f" Audio places bat-ball contact near the middle of the sequence "
+                f"({contact_s:.2f}s), so a middle frame should show contact.")
+    return (
+        f"These {n_images} frames are consecutive moments of ONE batting shot in "
+        "time order (earliest first), from backlift through contact to "
+        "follow-through. Identify the shot type and family, assess technique across "
+        "the key dimensions, list strengths and faults, give an overall rating, and "
+        "a short coaching summary." + note
+    )
+
+
+def analyze_session(clip_path: str, cfg: Config, run_id: str, out_dir: str | Path,
+                    pre: float = 1.2, post: float = 1.0, max_shots: int | None = None,
+                    progress=None) -> SessionReportData:
+    """Detect every shot via the audio knock and analyse each into one session.
+
+    Each contact anchors a ``[t-pre, t+post]`` window sampled evenly (backlift ->
+    contact -> follow-through). ``progress(i, n, msg)`` is called per shot.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    video = probe_video(clip_path)
+    fps = video.fps or 30.0
+
+    contacts = detect_contacts(clip_path)
+    if not contacts:
+        raise RuntimeError("No bat-ball contacts found in the audio — is there a "
+                           "clear knock? (this needs the session's own audio).")
+    contacts.sort(key=lambda c: c[1], reverse=True)
+    if max_shots:
+        contacts = contacts[:max_shots]
+    contacts.sort(key=lambda c: c[0])  # chronological in the report
+
+    client = make_client(cfg.llm)
+    total_frames = video.n_frames or 10 ** 9
+    shots: list[SessionShot] = []
+    tot_in = tot_out = 0
+    for i, (t, strength) in enumerate(contacts, 1):
+        lo = max(0, int((t - pre) * fps))
+        hi = min(total_frames - 1, int((t + post) * fps))
+        idx = sorted({int(round(x)) for x in
+                      np.linspace(lo, hi, num=cfg.llm.n_frames)})
+        frames, b64 = [], []
+        for fi in idx:
+            fr = read_frame_at(clip_path, fi)
+            if fr is None:
+                continue
+            frames.append(fr)
+            b64.append(_encode_jpeg_b64(fr, cfg.llm.image_long_edge_px))
+        if not b64:
+            continue
+        sheet = _contact_sheet(frames, str(out_dir / f"shot_{i:02d}.jpg"),
+                               cols=len(frames))
+
+        # One bad shot must not abort the session: retry once, then skip.
+        result = None
+        for attempt in (1, 2):
+            try:
+                result = client.analyze_images(b64, _SYSTEM, _user_text(len(b64), pre))
+                break
+            except Exception as exc:  # noqa: BLE001 — keep the session going
+                if attempt == 2 and progress:
+                    progress(i, len(contacts), f"shot at {t:.1f}s SKIPPED ({type(exc).__name__})")
+        if result is None:
+            continue
+        analysis, usage = result
+        tot_in += usage.input_tokens
+        tot_out += usage.output_tokens
+        if progress:
+            progress(i, len(contacts),
+                     f"shot at {t:.1f}s — {usage.input_tokens}+{usage.output_tokens} tok")
+        shots.append(SessionShot(index=i, time_s=round(t, 1),
+                                 contact_strength=round(strength, 0), frame_png=sheet,
+                                 input_tokens=usage.input_tokens,
+                                 output_tokens=usage.output_tokens, analysis=analysis))
+
+    return SessionReportData(
+        run_id=run_id, clip_path=str(clip_path), video=video,
+        backend=cfg.llm.backend, model=cfg.llm.model,
+        input_tokens=tot_in, output_tokens=tot_out,
+        cost_usd=round(estimate_cost(cfg.llm.model, Usage(tot_in, tot_out)), 4),
+        shots=shots)

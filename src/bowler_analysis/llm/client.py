@@ -18,14 +18,46 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from typing import Protocol
 
 from ..config import Llm
 from ..models.batter_schemas import BatterShotAnalysis
 
+
+@dataclass
+class Usage:
+    """Token usage for one LLM call."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+# Approximate on-demand text pricing, USD per 1M tokens (input, output).
+# Cost figures are estimates — confirm against your AWS/Anthropic billing.
+_PRICING_PER_M = {
+    "nova-micro": (0.035, 0.14),
+    "nova-lite": (0.06, 0.24),
+    "nova-pro": (0.80, 3.20),
+    "nova-premier": (2.50, 12.50),
+    "claude-opus": (5.00, 25.00),
+    "claude-sonnet": (3.00, 15.00),
+    "claude-haiku": (1.00, 5.00),
+}
+
+
+def estimate_cost(model: str, usage: Usage) -> float:
+    """Best-effort USD cost estimate for ``usage`` on ``model`` (0 if unknown)."""
+    m = model.lower()
+    for key, (pin, pout) in _PRICING_PER_M.items():
+        if key in m:
+            return usage.input_tokens / 1e6 * pin + usage.output_tokens / 1e6 * pout
+    return 0.0
+
 _JSON_INSTRUCTION = (
-    "\n\nReturn ONLY a single JSON object that conforms to this JSON Schema. "
-    "No prose, no markdown code fences:\n"
+    "\n\nReturn ONLY a single JSON object whose top-level keys are exactly the "
+    "schema's properties (shot_type, shot_family, ...). Do NOT wrap it in an outer "
+    "key. No prose, no markdown code fences. JSON Schema:\n"
 )
 
 
@@ -42,10 +74,24 @@ def _extract_json(text: str) -> str:
     return text[start:end + 1]
 
 
+def _parse_analysis(text: str) -> BatterShotAnalysis:
+    """Validate model JSON, unwrapping a single-key wrapper if present.
+
+    Some models (notably Nova) occasionally wrap the object under a root key
+    derived from the schema title, e.g. ``{"batterShotAnalysis": {...}}``.
+    """
+    obj = json.loads(_extract_json(text))
+    if isinstance(obj, dict) and "shot_type" not in obj and len(obj) == 1:
+        inner = next(iter(obj.values()))
+        if isinstance(inner, dict):
+            obj = inner
+    return BatterShotAnalysis.model_validate(obj)
+
+
 class LlmClient(Protocol):
     def analyze_images(
         self, images_b64: list[str], system: str, user_text: str
-    ) -> BatterShotAnalysis: ...
+    ) -> tuple[BatterShotAnalysis, Usage]: ...
 
 
 class _AnthropicFamilyClient:
@@ -79,7 +125,7 @@ class _AnthropicFamilyClient:
         blocks.append({"type": "text", "text": user_text})
         return blocks
 
-    def analyze_images(self, images_b64, system, user_text) -> BatterShotAnalysis:
+    def analyze_images(self, images_b64, system, user_text):
         messages = [{"role": "user", "content": self._content(images_b64, user_text)}]
         try:
             resp = self.client.messages.parse(
@@ -91,7 +137,8 @@ class _AnthropicFamilyClient:
                 output_format=BatterShotAnalysis,
             )
             if resp.parsed_output is not None:
-                return resp.parsed_output
+                u = resp.usage
+                return resp.parsed_output, Usage(u.input_tokens, u.output_tokens)
             raise ValueError("parsed_output was None")
         except Exception:
             # Defensive fallback: ask for raw JSON, validate ourselves.
@@ -104,7 +151,8 @@ class _AnthropicFamilyClient:
                     images_b64, user_text + _JSON_INSTRUCTION + schema)}],
             )
             text = next((b.text for b in resp.content if b.type == "text"), "")
-            return BatterShotAnalysis.model_validate_json(_extract_json(text))
+            u = resp.usage
+            return _parse_analysis(text), Usage(u.input_tokens, u.output_tokens)
 
 
 class _DatabricksClient:
@@ -130,7 +178,13 @@ class _DatabricksClient:
         return [{"role": "system", "content": system},
                 {"role": "user", "content": content}]
 
-    def analyze_images(self, images_b64, system, user_text) -> BatterShotAnalysis:
+    @staticmethod
+    def _usage(resp) -> Usage:
+        u = getattr(resp, "usage", None)
+        return Usage(getattr(u, "prompt_tokens", 0) or 0,
+                     getattr(u, "completion_tokens", 0) or 0) if u else Usage()
+
+    def analyze_images(self, images_b64, system, user_text):
         schema = BatterShotAnalysis.model_json_schema()
         try:
             resp = self.client.chat.completions.create(
@@ -143,8 +197,7 @@ class _DatabricksClient:
                                     "schema": schema, "strict": True},
                 },
             )
-            return BatterShotAnalysis.model_validate_json(
-                resp.choices[0].message.content)
+            return _parse_analysis(resp.choices[0].message.content), self._usage(resp)
         except Exception:
             # Defensive fallback: plain completion asking for raw JSON.
             resp = self.client.chat.completions.create(
@@ -154,8 +207,7 @@ class _DatabricksClient:
                     images_b64, system,
                     user_text + _JSON_INSTRUCTION + json.dumps(schema)),
             )
-            return BatterShotAnalysis.model_validate_json(
-                _extract_json(resp.choices[0].message.content))
+            return _parse_analysis(resp.choices[0].message.content), self._usage(resp)
 
 
 class _NovaBedrockClient:
@@ -178,7 +230,7 @@ class _NovaBedrockClient:
             m = "us." + m
         self.model = m
 
-    def analyze_images(self, images_b64, system, user_text) -> BatterShotAnalysis:
+    def analyze_images(self, images_b64, system, user_text):
         import base64
         schema = json.dumps(BatterShotAnalysis.model_json_schema())
         content = [{"image": {"format": "jpeg",
@@ -192,7 +244,9 @@ class _NovaBedrockClient:
             inferenceConfig={"maxTokens": self.cfg.max_tokens},
         )
         text = resp["output"]["message"]["content"][0]["text"]
-        return BatterShotAnalysis.model_validate_json(_extract_json(text))
+        u = resp.get("usage", {})
+        return _parse_analysis(text), Usage(u.get("inputTokens", 0),
+                                            u.get("outputTokens", 0))
 
 
 def make_client(cfg: Llm) -> LlmClient:
