@@ -114,6 +114,55 @@ contact sheet. Backends are config-driven (`llm:` in `config/default.yaml`):
 Structured output degrades gracefully to prompt-based JSON on backends without
 native support (Nova, Databricks).
 
+### Whole-session report (`session`)
+
+`bowler-analyze session` turns a **full net video** (many shots) into **one
+consolidated PDF**. It runs three stages — only the last uses the LLM:
+
+1. **Shot detection (no LLM):** every bat-ball **knock** is found from the audio
+   (high-pass > 2 kHz → onset peaks, `analysis/audio_contact.py`). Each knock is a
+   shot. Free, local, deterministic. (Motion-based detection exists but is *not*
+   used here — on real footage it latched onto the batter walking past the camera.)
+2. **Frame sampling (no LLM):** ~9 frames are grabbed around each contact.
+3. **Shot analysis (LLM, one call per shot):** the frames go to the configured
+   backend → shot type + technique.
+
+```bash
+export AWS_REGION=us-east-1                          # default backend: Nova on Bedrock
+bowler-analyze session data/raw/<session>.mov --out data/output/session
+#   --max-shots N     cap to the N strongest knocks (default: all)
+#   --backend / --model   same overrides as `batter` (e.g. --backend anthropic for Claude)
+```
+
+Outputs in the run dir: **`session_report.pdf`** (summary + per-shot breakdown),
+`session.json` (per-shot analysis + per-shot/total **token counts and an estimated
+cost**), and a frame strip per shot. Token + cost totals are also printed and shown
+on the report.
+
+> Detection caveat: audio finds *contacts*, so it misses leaves / play-and-misses
+> and can false-positive on bat taps or ball-into-net. Needs clean, audible knocks
+> (great for net sessions, poor for commentary-heavy broadcast).
+
+See **`docs/running-batter-analysis.md`** for the full runbook (prerequisites, AWS
+setup, troubleshooting, switching to Claude).
+
+### Extract per-shot clips & frames (no LLM, no cost)
+
+`scripts/extract_shots.py` runs only the detection + extraction stages: it finds
+each shot from the audio knock and writes a **trimmed clip** (the exact shot) and
+its **frames** per shot — handy for building a labelled dataset or reviewing shots
+without paying for the model.
+
+```bash
+.venv/bin/python scripts/extract_shots.py data/raw/<session>.mp4 --out data/shots/myvid
+#   --frames 9   frames per shot   --max-shots N   cap to N strongest
+#   --no-clips   frames only        --no-frames    clips only
+#   --pre/--post window, --min-gap/--height detector knobs
+```
+
+Produces `clips/shot_NN.mp4`, `frames/shot_NN/fNN.jpg` (+ a `shot_NN_strip.jpg`),
+and `manifest.csv` (shot, time, knock strength, clip).
+
 ## Getting a clip
 
 Any `.mp4`/`.mov` works. To pull one from a URL:
