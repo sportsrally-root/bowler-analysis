@@ -36,8 +36,14 @@ class BatterShotAnalysis(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    shot_type: str = Field(description="Specific shot name, e.g. 'straight drive', "
-                                       "'cover drive', 'pull', 'cut', 'defensive push'.")
+    shot_type: Literal[
+        "Backfoot Defence", "Frontfoot Defence", "Backfoot Punch", "Pull Shot",
+        "Straight Drive", "Flick Shot", "Cut Shot", "Cover Drive", "On Drive",
+        "Square Drive", "Off Drive", "Leave",
+    ] = Field(description="The shot, chosen from this fixed list. NOTE: the drives "
+              "(Straight/Cover/On/Off/Square) differ only by the direction the ball "
+              "is hit, which is often NOT visible from a front-on view — if so, pick "
+              "the most likely and lower your confidence rather than guessing.")
     shot_family: Literal["drive", "cut", "pull/hook", "sweep", "defensive",
                          "leave", "glance/flick", "other"] = Field(
         description="Coarse shot family the shot_type belongs to.")

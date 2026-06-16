@@ -35,7 +35,12 @@ _SYSTEM = (
     "Judge only what is visible across the frames; be specific and reference what "
     "you see. Cover head position, foot movement and stride, balance, bat-swing "
     "path and bat face, and follow-through. Be honest about faults — a coaching "
-    "report is only useful if it flags what to work on."
+    "report is only useful if it flags what to work on. Classify shot_type as "
+    "exactly one of the allowed values. Distinguish what is actually visible "
+    "(front-foot vs back-foot, vertical-bat drive vs horizontal-bat cut/pull, "
+    "attack vs defence); but the drives differ only by direction — if the camera "
+    "angle does not reveal where the ball went, choose the most likely drive and "
+    "lower your confidence instead of inventing certainty."
 )
 
 # Min audio-onset peak-to-mean ratio to trust the knock as the contact anchor.
